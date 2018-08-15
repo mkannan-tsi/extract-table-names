@@ -69,11 +69,11 @@ for file in files:
 			if i.get (u'name') is not None:
 				if "Custom SQL Query" in i.get (u'name'):
 					
-					for table in query_search (i.text, 'FROM'):
+					for table in query_search (i.text.lower(), 'FROM'):
 						tables.append (table)
 						queries.append (i.text)
 				
-					for table in query_search (i.text, 'JOIN'):
+					for table in query_search (i.text.lower(), 'JOIN'):
 						tables.append (table)
 						queries.append (i.text)
 
