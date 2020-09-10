@@ -1,10 +1,11 @@
 import tableauserverclient as TSC
 import csv
+
 #Server Details#
-SERVER_NAME = "http://mkannan"
+SERVER_NAME = ""
 SITE_NAME = ""
-USERNAME = "mkannan"
-PASSWORD = "abcd1234"
+USERNAME = ""
+PASSWORD = ""
 #Creating a TSC object#
 tableau_auth = TSC.TableauAuth(USERNAME, PASSWORD, SITE_NAME)
 server = TSC.Server(SERVER_NAME)
