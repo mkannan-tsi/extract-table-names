@@ -1,100 +1,99 @@
-from tableau_tools.tableau_documents import *
-from tableau_tools import *
-import urllib2
+import tableauserverclient as TSC
 import csv
+#Server Details#
+SERVER_NAME = "http://mkannan"
+SITE_NAME = ""
+USERNAME = "mkannan"
+PASSWORD = "abcd1234"
+#Creating a TSC object#
+tableau_auth = TSC.TableauAuth(USERNAME, PASSWORD, SITE_NAME)
+server = TSC.Server(SERVER_NAME)
+server.version = '3.5'
+#Initializing list elements for writing into CSV later#
+datasource_list, workbook_list, tableName_list, connectionType_list = ([] for i in range(4))
+sqlQuery_list, extract_list, publishedDatasource_list, dbName_list = ([] for i in range(4))
 
-##########################################
-files = [u'DB One Table.twb', 
-		 u'DB One Table Extract.twb', 
-		 u'DB Join.twb', 
-		 u'DB Join Extract.twb', 
-		 u'DB Join Custom SQL.twb', 
-		 u'DB Join Custom SQL Extract.twb', 
-		 u'DB Join Custom SQL Multiple.twb',
-		 u'DB Join Custom SQL Multiple Extract.twb', 
-		 u'DB Join Normal and Custom SQL.twb', 
-		 u'DB Join Normal and Custom SQL Extract.twb', 
-		 u'DB Multiple Tables Custom SQL.twb',
-		 u'Two Datasources DB Join Normal and Custom SQL.twb']
+#Metadata API query#
+query = '''
+{
+    workbooks {
+        name
+        embeddedDatasources {
+            name
+            hasExtracts
+            upstreamTables { 
+                name
+                connectionType
+                isEmbedded
+                database {
+                    name
+                }
+                referencedByQueries {
+                    query
+                }
+            }
+        }
+        upstreamDatasources {
+            name
+            hasExtracts
+            upstreamTables { 
+                name
+                connectionType
+                isEmbedded
+                database {
+                    name
+                }
+                referencedByQueries {
+                    query
+                }
+            }
+        }
+    }
+}
+'''
 
-#Recursive function to retrieve table names
-def query_search(query, substring):
-	tables = []
-	def search (query, substring):
-		if substring in query:
-			start_pos = query.find(substring)+len(substring)+1
-			
-			#Finding the correct delimiter
-			if query[start_pos:].find (' ') == -1:
-				end_pos = query[start_pos:].find ('\n')
-			elif query[start_pos:].find ('\n') == -1:
-				end_pos = query[start_pos:].find (' ')
-			else:
-				end_pos = min(query[start_pos:].find (' '), query[start_pos:].find ('\n'))
-			
-			#Returning the table name
-			if end_pos == -1:
-				tables.append(query [start_pos:])
-			else:	
-				tables.append(query [start_pos:(start_pos + end_pos)])
-			
-			#Search again with the reduced string
-			search ((query[start_pos:]), substring)
-	search(query, substring)
-	return tables
+#Signing into REST API and executing the metadata query#
+with server.auth.sign_in(tableau_auth):
+    resp = server.metadata.query(query)
+    workbooks = resp['data']
+    #Traversing through each workbook#
+    for workbook in workbooks['workbooks']:
+        #Published data-sources get double counted as embedded data-sources#
+        embedded_datasources = workbook['embeddedDatasources']
+        published_datasources = workbook['upstreamDatasources']
+        datasources = published_datasources.copy()
+        #Removing duplications#
+        for i in range (0, len(embedded_datasources)):
+            if embedded_datasources[i]['name'] in [d['name'] for d in published_datasources]:
+                pass
+            else:
+                datasources.append (embedded_datasources[i])
+        #Grabbing information at the granularity of each table within each data-source#
+        for datasource in datasources:
+            if datasource['upstreamTables']:
+                for counter in range (0, len(datasource['upstreamTables'])):
+                    if datasource in published_datasources:
+                        publishedDatasource_list.append ('True')
+                    else:
+                        publishedDatasource_list.append ('False')
+                    workbook_list.append (workbook['name'])
+                    datasource_list.append (datasource['name'])
+                    extract_list.append (datasource['hasExtracts'])
+                    tableName_list.append (datasource['upstreamTables'][counter]['name'])
+                    dbName_list.append (datasource['upstreamTables'][counter]['database']['name'])
+                    connectionType_list.append (datasource['upstreamTables'][counter]['connectionType'])
+                    if datasource['upstreamTables'][counter]['referencedByQueries']:
+                        sqlQuery_list.append (datasource['upstreamTables'][counter]['referencedByQueries'][0]['query'])
+                    else:
+                        sqlQuery_list.append ('')
 
-with open('tables.csv', 'wb') as csvfile:
+#Writing all the information into a CSV file#
+with open("tables.csv", "w+") as csvfile:
     table_writer = csv.writer(csvfile, delimiter=',', quoting=csv.QUOTE_MINIMAL)
-    table_writer.writerow(['Workbook Name', 'Datasource Name', 'Live/ Extract', 'Table Name', 'Custom SQL?'])				
-
-for file in files:
-	T_file = TableauFile(file)
-	t_doc =T_file.tableau_document
-	dses = t_doc.datasources
-
-	for ds in dses:
-		relation = ds.xml.findall (u'.//relation')
-		
-		tables = []
-		queries = []
-
-		for i in relation:
-			#Getting all table names
-			table_name = i.get (u'table')
-			if table_name is not None:
-				tables.append (table_name)
-				queries.append ("N/A")
-				
-			#Searching for Custom SQL
-			if i.get (u'name') is not None:
-				if "Custom SQL Query" in i.get (u'name'):
-					
-					for table in query_search (i.text.lower(), 'FROM'):
-						tables.append (table)
-						queries.append (i.text)
-				
-					for table in query_search (i.text.lower(), 'JOIN'):
-						tables.append (table)
-						queries.append (i.text)
-
-		#Tables will be printed if they exist
-		if tables:
-			#Is datasource an extract or live?
-			connection_type = ""
-			if tables[-1] == "[Extract].[Extract]":
-				connection_type = "Extract"
-				del tables [-1]
-				del queries [-1]
-			else:
-				connection_type =  "Live"
-			
-			#Writing to file
-			for counter in range (len(tables)):
-				with open('tables.csv', 'ab') as csvfile:
-					table_writer = csv.writer(csvfile, delimiter=',', quoting=csv.QUOTE_MINIMAL)
-					table_writer.writerow([file, ds.ds_name, connection_type, tables[counter].strip("[]`"), queries[counter]])        
-
-	#Newline for each new workbook
-	with open('tables.csv', 'ab') as csvfile:
-		table_writer = csv.writer(csvfile, delimiter=',', quoting=csv.QUOTE_MINIMAL)
-		table_writer.writerow("")
+    table_writer.writerow(['Workbook Name', 'Datasource Name', 'Published Datasource?', 'Extract?',
+                           'Table Name', 'Database Name', 'Connection Type', 'Custom SQL?'])	
+    for counter in range (0, len(datasource_list)):
+        table_writer.writerow([workbook_list[counter], datasource_list[counter], 
+                               publishedDatasource_list[counter], extract_list[counter], 
+                               tableName_list[counter], dbName_list[counter],
+                               connectionType_list[counter], sqlQuery_list[counter]])
